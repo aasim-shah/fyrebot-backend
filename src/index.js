@@ -66,6 +66,7 @@ await fastify.register(multipart, {
 
 /// okay 
 
+
 // Decorate fastify with middleware
 fastify.decorate('authenticate', authenticateFlexible); // Use flexible auth by default
 fastify.decorate('authenticateJWT', authenticateJWT);

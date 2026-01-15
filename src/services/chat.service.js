@@ -28,6 +28,23 @@ class ChatService {
     try {
       const { sessionId = null, includeMetadata = false } = options;
 
+      // Check if this is a greeting or general conversation starter
+      const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'];
+      const queryLower = query.toLowerCase().trim();
+      const isGreeting = greetings.some(greeting => 
+        queryLower === greeting || 
+        queryLower.startsWith(greeting + ' ') ||
+        queryLower.startsWith(greeting + ',')
+      );
+
+      if (isGreeting) {
+        return {
+          answer: `Hello! I'm the AI assistant for ${tenant.businessName}. How can I help you today? Feel free to ask me any questions about our products, services, or policies.`,
+          confidence: 'high',
+          sources: []
+        };
+      }
+
       // Perform vector search to get relevant context
       const searchResults = await vectorSearchService.search(tenantId, query, {
         limit: 5,
@@ -36,7 +53,7 @@ class ChatService {
 
       if (searchResults.length === 0) {
         return {
-          answer: "I don't have enough information to answer that question. Please provide more context or rephrase your question.",
+          answer: "I don't have enough information to answer that question. Please provide more context or rephrase your question, or try asking about our products, services, or policies.",
           confidence: 'low',
           sources: []
         };
