@@ -1,5 +1,6 @@
 import tenantService from '../services/tenant.service.js';
-import { registerTenantSchema, loginTenantSchema, updateTenantSchema, updatePlanSchema } from '../schemas/validation.js';
+import openaiService from '../services/openai.service.js';
+import { registerTenantSchema, loginTenantSchema, updateTenantSchema, updatePlanSchema, updateOpenAIKeySchema } from '../schemas/validation.js';
 
 /**
  * Tenant routes
@@ -222,6 +223,93 @@ export default async function tenantRoutes(fastify, options) {
     } catch (error) {
       return reply.code(500).send({
         error: 'Failed to list API keys',
+        message: error.message
+      });
+    }
+  });
+
+  // Save OpenAI API key
+  fastify.post('/openai-key', {
+    preHandler: [fastify.authenticate]
+  }, async (request, reply) => {
+    try {
+      const { openaiApiKey } = updateOpenAIKeySchema.parse(request.body);
+      
+      // Validate the API key with OpenAI
+      const validation = await openaiService.validateApiKey(openaiApiKey);
+      if (!validation.valid) {
+        return reply.code(400).send({
+          error: 'Invalid API key',
+          message: validation.error || 'The OpenAI API key could not be validated'
+        });
+      }
+      
+      const result = await tenantService.saveOpenAIApiKey(request.tenantId, openaiApiKey);
+      
+      // Clear cached OpenAI client for this tenant
+      openaiService.clearTenantClient(request.tenantId);
+      
+      return reply.send({
+        success: true,
+        data: {
+          hint: result.hint
+        },
+        message: 'OpenAI API key saved successfully'
+      });
+    } catch (error) {
+      if (error.name === 'ZodError') {
+        return reply.code(400).send({
+          error: 'Validation error',
+          details: error.errors
+        });
+      }
+      
+      return reply.code(500).send({
+        error: 'Failed to save OpenAI API key',
+        message: error.message
+      });
+    }
+  });
+
+  // Get OpenAI API key status (hint only)
+  fastify.get('/openai-key', {
+    preHandler: [fastify.authenticate]
+  }, async (request, reply) => {
+    try {
+      const tenant = await tenantService.getTenant(request.tenantId);
+      
+      return reply.send({
+        success: true,
+        data: {
+          hasKey: !!tenant.openaiApiKeyEncrypted,
+          hint: tenant.openaiApiKeyHint || null
+        }
+      });
+    } catch (error) {
+      return reply.code(500).send({
+        error: 'Failed to get OpenAI API key status',
+        message: error.message
+      });
+    }
+  });
+
+  // Delete OpenAI API key
+  fastify.delete('/openai-key', {
+    preHandler: [fastify.authenticate]
+  }, async (request, reply) => {
+    try {
+      await tenantService.deleteOpenAIApiKey(request.tenantId);
+      
+      // Clear cached OpenAI client for this tenant
+      openaiService.clearTenantClient(request.tenantId);
+      
+      return reply.send({
+        success: true,
+        message: 'OpenAI API key deleted successfully'
+      });
+    } catch (error) {
+      return reply.code(500).send({
+        error: 'Failed to delete OpenAI API key',
         message: error.message
       });
     }

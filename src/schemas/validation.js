@@ -43,6 +43,13 @@ export const updatePlanSchema = z.object({
   plan: z.enum(['free', 'pro', 'enterprise'])
 });
 
+export const updateOpenAIKeySchema = z.object({
+  openaiApiKey: z.string().min(1, 'API key is required').refine(
+    (key) => key.startsWith('sk-'),
+    'Invalid OpenAI API key format (should start with sk-)'
+  )
+});
+
 export const vectorSearchSchema = z.object({
   query: z.string().min(1),
   limit: z.number().int().min(1).max(20).optional().default(5),

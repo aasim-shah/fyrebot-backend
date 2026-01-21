@@ -1,4 +1,4 @@
-import Groq from 'groq-sdk';
+import openaiService from './openai.service.js';
 import vectorSearchService from './vector-search.service.js';
 import redis from '../db/redis.js';
 import { retryWithBackoff, estimateTokens } from '../utils/helpers.js';
@@ -6,19 +6,69 @@ import pino from 'pino';
 
 const logger = pino();
 
+/**
+ * Chat Service - Using OpenAI for production-ready chat completions
+ */
 class ChatService {
   constructor() {
-    this.groq = null;
+    this.initialized = false;
   }
 
   initialize() {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
-      throw new Error('GROQ_API_KEY is not defined');
-    }
+    openaiService.initialize();
+    this.initialized = true;
+    logger.info('Chat service initialized with OpenAI');
+  }
 
-    this.groq = new Groq({ apiKey });
-    logger.info('Using Groq for chat completion');
+  /**
+   * Classify query type for intelligent routing
+   */
+  classifyQuery(query) {
+    const queryLower = query.toLowerCase().trim();
+    
+    // Greetings
+    const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'];
+    if (greetings.some(g => queryLower === g || queryLower.startsWith(g + ' ') || queryLower.startsWith(g + ','))) {
+      return 'GREETING';
+    }
+    
+    // Simple acknowledgments
+    const acknowledgments = ['ok', 'okay', 'thanks', 'thank you', 'got it', 'understood'];
+    if (acknowledgments.some(a => queryLower === a)) {
+      return 'ACKNOWLEDGMENT';
+    }
+    
+    // Questions about the AI itself
+    const metaQuestions = ['who are you', 'what are you', 'what can you do', 'how do you work'];
+    if (metaQuestions.some(q => queryLower.includes(q))) {
+      return 'META';
+    }
+    
+    // Default to knowledge query (uses RAG)
+    return 'KNOWLEDGE';
+  }
+
+  /**
+   * Build context from search results with token limits
+   */
+  buildContext(searchResults, maxTokens = 2000) {
+    let context = '';
+    let estimatedTokens = 0;
+    
+    for (let i = 0; i < searchResults.length; i++) {
+      const result = searchResults[i];
+      const chunk = `[${i + 1}] ${result.sectionTitle}: ${result.text}`;
+      const chunkTokens = Math.ceil(chunk.length / 4); // Rough estimate
+      
+      if (estimatedTokens + chunkTokens > maxTokens) {
+        break; // Stop adding context if we exceed limit
+      }
+      
+      context += chunk + '\n\n';
+      estimatedTokens += chunkTokens;
+    }
+    
+    return context.trim();
   }
 
   /**
@@ -28,67 +78,80 @@ class ChatService {
     try {
       const { sessionId = null, includeMetadata = false } = options;
 
-      // Check if this is a greeting or general conversation starter
-      const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'];
-      const queryLower = query.toLowerCase().trim();
-      const isGreeting = greetings.some(greeting => 
-        queryLower === greeting || 
-        queryLower.startsWith(greeting + ' ') ||
-        queryLower.startsWith(greeting + ',')
-      );
+      // Classify query type
+      const queryType = this.classifyQuery(query);
 
-      if (isGreeting) {
+      // Handle non-knowledge queries directly
+      if (queryType === 'GREETING') {
         return {
-          answer: `Hello! I'm the AI assistant for ${tenant.businessName}. How can I help you today? Feel free to ask me any questions about our products, services, or policies.`,
+          answer: `Hello! I'm the AI assistant for ${tenant.businessName || tenant.name}. How can I help you today? Feel free to ask me any questions about our products, services, or policies.`,
           confidence: 'high',
-          sources: []
+          sources: [],
+          queryType: 'GREETING'
         };
       }
 
-      // Perform vector search to get relevant context
-      const searchResults = await vectorSearchService.search(tenantId, query, {
-        limit: 5,
-        minScore: 0.70
+      if (queryType === 'ACKNOWLEDGMENT') {
+        return {
+          answer: "You're welcome! Is there anything else I can help you with?",
+          confidence: 'high',
+          sources: [],
+          queryType: 'ACKNOWLEDGMENT'
+        };
+      }
+
+      if (queryType === 'META') {
+        return {
+          answer: `I'm an AI assistant trained on ${tenant.businessName || tenant.name}'s knowledge base. I can answer questions about our products, services, policies, and more. What would you like to know?`,
+          confidence: 'high',
+          sources: [],
+          queryType: 'META'
+        };
+      }
+
+      // For KNOWLEDGE queries, use RAG pipeline with timeout
+      const searchStart = Date.now();
+      const searchResults = await vectorSearchService.search(tenantId, tenant, query, {
+        limit: 3, // Reduced from 5 to 3 for faster responses
+        minScore: 0.60 // Lowered from 0.70 for more results
       });
+      const searchTime = Date.now() - searchStart;
 
       if (searchResults.length === 0) {
         return {
-          answer: "I don't have enough information to answer that question. Please provide more context or rephrase your question, or try asking about our products, services, or policies.",
+          answer: "I don't have enough information in my knowledge base to answer that question accurately. Please provide more context, or feel free to ask about our products, services, or policies.",
           confidence: 'low',
-          sources: []
+          sources: [],
+          queryType: 'KNOWLEDGE'
         };
       }
 
-      // Build context from search results
-      const context = searchResults
-        .map((result, idx) => `[${idx + 1}] ${result.sectionTitle}: ${result.text}`)
-        .join('\n\n');
+      // Build context with token limit
+      const context = this.buildContext(searchResults, 1500); // Limit context to ~1500 tokens
 
-      // Build prompt
-      const systemPrompt = this.buildSystemPrompt(tenant.businessName);
+      // Build messages (keep history short)
+      const systemPrompt = this.buildSystemPrompt(tenant.businessName || tenant.name);
       const userPrompt = this.buildUserPrompt(query, context);
 
-      // Get chat history if session exists
-      const history = sessionId ? await this.getHistory(sessionId) : [];
+      // Get chat history if session exists (limit to last 4 messages)
+      let history = sessionId ? await this.getHistory(sessionId) : [];
+      history = history.slice(-4); // Keep only last 2 exchanges
 
-      // Build messages array for Groq
       const messages = [
         { role: 'system', content: systemPrompt },
         ...history,
         { role: 'user', content: userPrompt }
       ];
 
-      // Generate response using Groq
-      const result = await retryWithBackoff(async () => {
-        return await this.groq.chat.completions.create({
-          model: process.env.CHAT_MODEL || 'llama-3.3-70b-versatile',
-          messages: messages,
-          max_tokens: Math.min(tenant.limits.tokensPerRequest, 2048),
-          temperature: 0.7,
-        });
+      // Generate response using OpenAI with optimized settings
+      const chatStart = Date.now();
+      const result = await openaiService.chatCompletion(messages, tenant, {
+        maxTokens: Math.min(tenant.limits.tokensPerRequest, 500), // Reduced from 2048
+        temperature: 0.7
       });
+      const chatTime = Date.now() - chatStart;
 
-      const response = result.choices[0]?.message?.content || "I couldn't generate a response.";
+      const response = result.content;
 
       // Save to history if session exists
       if (sessionId) {
@@ -97,7 +160,7 @@ class ChatService {
 
       // Determine confidence based on search scores
       const avgScore = searchResults.reduce((sum, r) => sum + r.score, 0) / searchResults.length;
-      const confidence = avgScore > 0.85 ? 'high' : avgScore > 0.70 ? 'medium' : 'low';
+      const confidence = avgScore > 0.80 ? 'high' : avgScore > 0.60 ? 'medium' : 'low';
 
       const responseData = {
         answer: response,
@@ -107,22 +170,42 @@ class ChatService {
           title: r.sectionTitle,
           type: r.sectionType,
           score: r.score
-        }))
+        })),
+        queryType: 'KNOWLEDGE'
       };
 
       if (includeMetadata) {
         responseData.metadata = {
           searchResultsCount: searchResults.length,
           averageScore: avgScore,
-          tokensUsed: estimateTokens(context + query + response)
+          tokensUsed: result.usage.total_tokens,
+          model: result.model,
+          timing: {
+            searchMs: searchTime,
+            chatMs: chatTime,
+            totalMs: searchTime + chatTime
+          }
         };
       }
 
-      logger.info({ tenantId, confidence, sourcesCount: searchResults.length }, 'Chat query processed');
+      logger.info({ 
+        tenantId, 
+        confidence, 
+        sourcesCount: searchResults.length,
+        tokensUsed: result.usage.total_tokens,
+        searchMs: searchTime,
+        chatMs: chatTime
+      }, 'Chat query processed');
 
       return responseData;
     } catch (error) {
       logger.error({ error: error.message, tenantId }, 'Failed to process chat query');
+      
+      // Return user-friendly error
+      if (error.message.includes('API key')) {
+        throw new Error('OpenAI API key is missing or invalid. Please update your API key in settings.');
+      }
+      
       throw error;
     }
   }
@@ -136,9 +219,12 @@ Your role is to answer customer questions accurately based on the provided conte
 
 Guidelines:
 - Answer questions using ONLY the information provided in the context
-- Be concise and helpful
-- If the context doesn't contain enough information, acknowledge the limitation
-- Maintain a professional and friendly tone
+- Be concise, helpful, and professional
+- If the context doesn't contain enough information, politely acknowledge the limitation
+- Format your responses clearly with proper markdown when appropriate
+- For lists, use bullet points or numbered lists
+- For comparisons, consider using tables
+- Maintain a friendly and professional tone
 - Do not make up information that isn't in the context`;
   }
 
@@ -151,7 +237,7 @@ ${context}
 
 User Question: ${query}
 
-Please provide a helpful answer based on the context above.`;
+Please provide a helpful, well-formatted answer based on the context above.`;
   }
 
   /**

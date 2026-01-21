@@ -13,7 +13,7 @@ export default async function dataRoutes(fastify, options) {
       success: true,
       formats: documentParserService.constructor.getSupportedFormats(),
       maxFileSize: documentParserService.constructor.MAX_FILE_SIZE,
-      maxFiles: 10
+      maxFiles: 'unlimited' // No file limit anymore
     });
   });
 
@@ -84,6 +84,7 @@ export default async function dataRoutes(fastify, options) {
 
           const result = await dataService.registerData(
             request.tenantId,
+            request.tenant,
             [section],
             request.tenant.limits
           );
@@ -167,6 +168,7 @@ export default async function dataRoutes(fastify, options) {
       
       const result = await dataService.registerData(
         request.tenantId,
+        request.tenant,
         sections,
         request.tenant.limits
       );
@@ -203,6 +205,7 @@ export default async function dataRoutes(fastify, options) {
       // Update the section
       const updatedSection = await dataService.updateSection(
         request.tenantId,
+        request.tenant,
         id,
         { title, content, metadata }
       );
@@ -248,6 +251,7 @@ export default async function dataRoutes(fastify, options) {
       const { sections } = registerDataSchema.parse(request.body);
       const result = await dataService.registerData(
         request.tenantId,
+        request.tenant,
         sections,
         request.tenant.limits
       );

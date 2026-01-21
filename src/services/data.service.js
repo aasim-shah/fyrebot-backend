@@ -21,15 +21,22 @@ class DataService {
   /**
    * Register data sections and generate embeddings
    */
-  async registerData(tenantId, sections, limits) {
+  async registerData(tenantId, tenant, sections, limits) {
     try {
-      // Check section limit
-      const currentCount = await this.sectionsCollection.countDocuments({ tenantId });
+      // Check section limit - now based on vectors, not sections
+      const currentVectorCount = await this.chunksCollection.countDocuments({ tenantId });
       
-      if (currentCount + sections.length > limits.sectionsPerTenant) {
+      // Estimate new vectors
+      let estimatedNewVectors = 0;
+      for (const section of sections) {
+        const chunks = chunkText(section.content || '', CHUNK_CONFIG.size, CHUNK_CONFIG.overlap);
+        estimatedNewVectors += chunks.length;
+      }
+
+      if (currentVectorCount + estimatedNewVectors > limits.vectorLimit) {
         throw new Error(
-          `Section limit exceeded. Your plan allows ${limits.sectionsPerTenant} sections. ` +
-          `Current: ${currentCount}, Attempting to add: ${sections.length}`
+          `Vector limit exceeded. Your plan allows ${limits.vectorLimit} vectors. ` +
+          `Current: ${currentVectorCount}, Estimated new: ${estimatedNewVectors}`
         );
       }
 
@@ -57,9 +64,9 @@ class DataService {
           throw new Error(`Section "${section.title}" produced no chunks. Content may be too short or invalid.`);
         }
 
-        // Generate embeddings for all chunks
+        // Generate embeddings for all chunks - PASS TENANT OBJECT
         logger.info({ sectionId, chunkCount: chunks.length }, 'Generating embeddings');
-        const embeddings = await embeddingService.generateEmbeddings(chunks);
+        const embeddings = await embeddingService.generateEmbeddings(chunks, tenant);
 
         // Create section document
         const sectionDoc = {

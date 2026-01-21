@@ -1,6 +1,7 @@
 import mongodb from '../db/mongodb.js';
 import redis from '../db/redis.js';
 import { generateId, hashApiKey, hashPassword, comparePassword, generateToken } from '../utils/helpers.js';
+import { encrypt, decrypt, maskApiKey } from '../utils/encryption.js';
 import { PLANS, CACHE_TTL } from '../utils/constants.js';
 import pino from 'pino';
 
@@ -137,7 +138,12 @@ class TenantService {
       const cached = await redis.get(cacheKey);
       
       if (cached) {
-        return JSON.parse(cached);
+        const tenant = JSON.parse(cached);
+        // Decrypt OpenAI API key if present
+        if (tenant.openaiApiKeyEncrypted) {
+          tenant.openaiApiKey = decrypt(tenant.openaiApiKeyEncrypted);
+        }
+        return tenant;
       }
 
       const tenant = await this.collection.findOne({ tenantId, status: 'active' });
@@ -146,8 +152,13 @@ class TenantService {
         throw new Error('Tenant not found');
       }
 
-      // Cache for 1 hour
+      // Cache for 1 hour (without decrypted key)
       await redis.set(cacheKey, JSON.stringify(tenant), CACHE_TTL.tenant);
+      
+      // Decrypt OpenAI API key if present (after caching)
+      if (tenant.openaiApiKeyEncrypted) {
+        tenant.openaiApiKey = decrypt(tenant.openaiApiKeyEncrypted);
+      }
       
       return tenant;
     } catch (error) {
@@ -403,6 +414,88 @@ class TenantService {
       }));
     } catch (error) {
       logger.error({ error: error.message, tenantId }, 'Failed to list API keys');
+      throw error;
+    }
+  }
+
+  /**
+   * Save OpenAI API key (encrypted)
+   */
+  async saveOpenAIApiKey(tenantId, openaiApiKey) {
+    try {
+      // Encrypt the API key before storing
+      const encryptedKey = encrypt(openaiApiKey);
+      
+      await this.collection.updateOne(
+        { tenantId, status: 'active' },
+        { 
+          $set: { 
+            openaiApiKeyEncrypted: encryptedKey,
+            openaiApiKeyHint: maskApiKey(openaiApiKey),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      // Invalidate cache
+      await redis.del(`tenant:${tenantId}`);
+
+      logger.info({ tenantId }, 'OpenAI API key saved');
+      
+      return { 
+        success: true, 
+        hint: maskApiKey(openaiApiKey) 
+      };
+    } catch (error) {
+      logger.error({ error: error.message, tenantId }, 'Failed to save OpenAI API key');
+      throw error;
+    }
+  }
+
+  /**
+   * Get decrypted OpenAI API key for tenant
+   */
+  async getOpenAIApiKey(tenantId) {
+    try {
+      const tenant = await this.getTenant(tenantId);
+      
+      if (!tenant.openaiApiKeyEncrypted) {
+        return null;
+      }
+      
+      return decrypt(tenant.openaiApiKeyEncrypted);
+    } catch (error) {
+      logger.error({ error: error.message, tenantId }, 'Failed to get OpenAI API key');
+      throw error;
+    }
+  }
+
+  /**
+   * Delete OpenAI API key
+   */
+  async deleteOpenAIApiKey(tenantId) {
+    try {
+      await this.collection.updateOne(
+        { tenantId, status: 'active' },
+        { 
+          $unset: { 
+            openaiApiKeyEncrypted: '',
+            openaiApiKeyHint: ''
+          },
+          $set: {
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      // Invalidate cache
+      await redis.del(`tenant:${tenantId}`);
+
+      logger.info({ tenantId }, 'OpenAI API key deleted');
+      
+      return { success: true };
+    } catch (error) {
+      logger.error({ error: error.message, tenantId }, 'Failed to delete OpenAI API key');
       throw error;
     }
   }

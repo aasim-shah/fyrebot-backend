@@ -1,4 +1,4 @@
-# Chatbot SaaS Platform
+# FyreBot Platform
 
 A production-ready multi-tenant SaaS chatbot platform with RAG (Retrieval-Augmented Generation) using Gemini AI, MongoDB, and Redis.
 

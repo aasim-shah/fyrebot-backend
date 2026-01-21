@@ -63,10 +63,6 @@ await fastify.register(multipart, {
   }
 });
 
-
-/// okay 
-
-
 // Decorate fastify with middleware
 fastify.decorate('authenticate', authenticateFlexible); // Use flexible auth by default
 fastify.decorate('authenticateJWT', authenticateJWT);
@@ -95,7 +91,7 @@ fastify.get('/health', async (request, reply) => {
 // Root endpoint
 fastify.get('/', async (request, reply) => {
   return {
-    name: 'Chatbot SaaS API',
+    name: 'FyreBot API',
     version: '1.0.0',
     description: 'Multi-tenant chatbot platform with RAG',
     endpoints: {
@@ -153,6 +149,18 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 // Start server
 async function start() {
   try {
+    // Validate required environment variables
+    if (!process.env.ENCRYPTION_KEY) {
+      logger.error('ENCRYPTION_KEY is not set in environment variables');
+      logger.error('Please add ENCRYPTION_KEY to your .env file');
+      logger.error('You can generate one with: openssl rand -base64 32');
+      process.exit(1);
+    }
+
+    if (!process.env.JWT_SECRET) {
+      logger.warn('JWT_SECRET not set, using default (NOT SECURE FOR PRODUCTION)');
+    }
+
     // Connect to databases
     logger.info('Connecting to databases...');
     await mongodb.connect();
@@ -174,6 +182,8 @@ async function start() {
     
     logger.info(`🚀 Server running at http://${host}:${port}`);
     logger.info(`📚 API documentation: http://${host}:${port}/`);
+    logger.info(`✅ OpenAI integration active`);
+    logger.info(`✅ Encryption enabled for API keys`);
   } catch (error) {
     logger.error({ error: error.message }, 'Failed to start server');
     process.exit(1);

@@ -18,7 +18,7 @@ class VectorSearchService {
    * Perform vector similarity search
    * Note: Requires Atlas Search vector index named 'vector_index'
    */
-  async search(tenantId, queryText, options = {}) {
+  async search(tenantId, tenant, queryText, options = {}) {
     try {
       const {
         limit = VECTOR_SEARCH.limit,
@@ -26,8 +26,8 @@ class VectorSearchService {
         sectionType = null
       } = options;
 
-      // Generate embedding for query
-      const queryEmbedding = await embeddingService.generateEmbedding(queryText);
+      // Generate embedding for query - PASS TENANT
+      const queryEmbedding = await embeddingService.generateEmbedding(queryText, tenant);
 
       // Build match filter for tenant isolation
       const matchFilter = { tenantId };

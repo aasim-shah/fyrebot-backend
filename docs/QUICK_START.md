@@ -1,6 +1,6 @@
 # 🚀 Quick Start Guide
 
-Get your chatbot SaaS platform running in under 5 minutes!
+Get your FyreBot platform running in under 5 minutes!
 
 ## Prerequisites
 

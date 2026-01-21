@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🚀 Setting up Chatbot SaaS Platform..."
+echo "🚀 Setting up FyreBot Platform..."
 echo ""
 
 # Check Node.js version
