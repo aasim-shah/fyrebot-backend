@@ -5,9 +5,12 @@ export const PLANS = {
     name: 'free',
     price: 0,
     limits: {
+      apiKeys: 1,
+      dataFiles: 10,
+      maxFileSize: 10 * 1024 * 1024, // 10MB
+      chatbots: 1,
       apiCallsPerMonth: 1000,
-      storageLimit: 100 * 1024 * 1024, // 100MB
-      vectorLimit: 100000, // 100K vectors
+      storageLimit: 10 * 1024 * 1024, // 10MB total
       tokensPerRequest: 2000,
       requestsPerMinute: 10,
       requestsPerHour: 100
@@ -15,11 +18,14 @@ export const PLANS = {
   },
   PRO: {
     name: 'pro',
-    price: 29,
+    price: 9.99,
     limits: {
+      apiKeys: 4,
+      dataFiles: 40,
+      maxFileSize: 100 * 1024 * 1024, // 100MB
+      chatbots: 4,
       apiCallsPerMonth: 50000,
-      storageLimit: 10 * 1024 * 1024 * 1024, // 10GB
-      vectorLimit: 1000000, // 1M vectors
+      storageLimit: 4000 * 1024 * 1024, // 4GB total (100MB * 40 files)
       tokensPerRequest: 4000,
       requestsPerMinute: 30,
       requestsPerHour: 500
@@ -29,9 +35,12 @@ export const PLANS = {
     name: 'enterprise',
     price: 299,
     limits: {
+      apiKeys: 20,
+      dataFiles: 200,
+      maxFileSize: 500 * 1024 * 1024, // 500MB
+      chatbots: 20,
       apiCallsPerMonth: 500000,
       storageLimit: 100 * 1024 * 1024 * 1024, // 100GB
-      vectorLimit: 10000000, // 10M vectors
       tokensPerRequest: 8000,
       requestsPerMinute: 100,
       requestsPerHour: 2000

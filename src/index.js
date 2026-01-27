@@ -19,11 +19,15 @@ import embeddingService from './services/embedding.service.js';
 import dataService from './services/data.service.js';
 import vectorSearchService from './services/vector-search.service.js';
 import chatService from './services/chat.service.js';
+import stripeService from './services/stripe.service.js';
+import emailService from './services/email.service.js';
 
 // Routes
 import tenantRoutes from './routes/tenant.routes.js';
 import dataRoutes from './routes/data.routes.js';
 import chatRoutes from './routes/chat.routes.js';
+import subscriptionRoutes from './routes/subscription.routes.js';
+import ticketRoutes from './routes/ticket.routes.js';
 
 const logger = pino({
   transport: {
@@ -51,7 +55,7 @@ await fastify.register(helmet, {
 await fastify.register(cors, {
   origin: process.env.CORS_ORIGIN || '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'stripe-signature'],
   credentials: true
 });
 
@@ -107,6 +111,8 @@ fastify.get('/', async (request, reply) => {
 await fastify.register(tenantRoutes, { prefix: '/api/tenants' });
 await fastify.register(dataRoutes, { prefix: '/api/data' });
 await fastify.register(chatRoutes, { prefix: '/api/chat' });
+await fastify.register(subscriptionRoutes, { prefix: '/api/subscription' });
+await fastify.register(ticketRoutes, { prefix: '/api' });
 
 // Global error handler
 fastify.setErrorHandler((error, request, reply) => {
@@ -173,6 +179,7 @@ async function start() {
     dataService.initialize();
     vectorSearchService.initialize();
     chatService.initialize();
+    emailService.initialize();
     
     // Start server
     const port = process.env.PORT || 3000;

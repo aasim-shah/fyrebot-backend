@@ -43,7 +43,7 @@ class VectorSearchService {
             path: 'embedding',
             queryVector: queryEmbedding,
             numCandidates: VECTOR_SEARCH.numCandidates,
-            limit: limit * 2,
+            limit: limit * 3, // Increased from limit * 2 to get more candidates for re-ranking
             filter: matchFilter
           }
         },
@@ -56,9 +56,6 @@ class VectorSearchService {
           $match: {
             score: { $gte: minScore }
           }
-        },
-        {
-          $limit: limit
         },
         {
           $project: {
@@ -86,7 +83,11 @@ class VectorSearchService {
         return await this.fallbackTextSearch(tenantId, queryText, options);
       }
 
-      return results;
+      // Apply intelligent re-ranking based on query and file names
+      const rerankedResults = this.reRankResults(results, queryText);
+      
+      // Return top results after re-ranking
+      return rerankedResults.slice(0, limit);
     } catch (error) {
       logger.error({ error: error.message, tenantId }, 'Vector search failed');
       
@@ -94,6 +95,94 @@ class VectorSearchService {
       logger.info('Falling back to text search');
       return await this.fallbackTextSearch(tenantId, queryText, options);
     }
+  }
+
+  /**
+   * Re-rank search results based on query-to-filename relevance
+   * Boosts results where the filename/title matches the query topic
+   */
+  reRankResults(results, queryText) {
+    const queryLower = queryText.toLowerCase();
+    
+    // Define topic keywords and their associated file patterns
+    const topicBoosts = [
+      {
+        keywords: ['work experience', 'job history', 'employment', 'career', 'professional background'],
+        filePatterns: ['work_experience', 'work experience', 'employment', 'career', '11_work'],
+        boost: 0.35
+      },
+      {
+        keywords: ['pricing', 'payment', 'cost', 'price', 'fee'],
+        filePatterns: ['pricing', 'payment', 'cost', '05_pricing'],
+        boost: 0.30
+      },
+      {
+        keywords: ['portfolio', 'project', 'case study', 'work samples'],
+        filePatterns: ['portfolio', 'project', '06_portfolio'],
+        boost: 0.30
+      },
+      {
+        keywords: ['contact', 'booking', 'schedule', 'appointment'],
+        filePatterns: ['contact', 'booking', '07_contact'],
+        boost: 0.30
+      },
+      {
+        keywords: ['technology', 'tech stack', 'framework', 'tools'],
+        filePatterns: ['technology', 'tech', 'stack', '08_technology'],
+        boost: 0.30
+      },
+      {
+        keywords: ['policy', 'terms', 'conditions', 'legal'],
+        filePatterns: ['policy', 'terms', 'conditions', '09_policies'],
+        boost: 0.30
+      },
+      {
+        keywords: ['faq', 'question', 'help', 'troubleshoot'],
+        filePatterns: ['faq', 'troubleshoot', '10_faqs'],
+        boost: 0.30
+      }
+    ];
+    
+    const scoredResults = results.map(result => {
+      let boostScore = 0;
+      const titleLower = result.sectionTitle.toLowerCase();
+      
+      // Check if query matches any topic and if the file is relevant to that topic
+      for (const topic of topicBoosts) {
+        const queryMatchesTopic = topic.keywords.some(kw => queryLower.includes(kw));
+        const fileMatchesTopic = topic.filePatterns.some(pattern => titleLower.includes(pattern));
+        
+        if (queryMatchesTopic && fileMatchesTopic) {
+          boostScore = topic.boost;
+          logger.debug({ 
+            title: result.sectionTitle, 
+            boost: boostScore,
+            reason: 'topic-file match'
+          }, 'Boosting result');
+          break;
+        }
+      }
+      
+      // Apply boost to the score
+      const finalScore = Math.min(result.score + boostScore, 1.0);
+      
+      return {
+        ...result,
+        score: finalScore,
+        originalScore: result.score,
+        boosted: boostScore > 0
+      };
+    });
+    
+    // Sort by final score
+    const sortedResults = scoredResults.sort((a, b) => b.score - a.score);
+    
+    logger.info({ 
+      totalResults: sortedResults.length,
+      boostedCount: sortedResults.filter(r => r.boosted).length
+    }, 'Re-ranking completed');
+    
+    return sortedResults;
   }
 
   /**
@@ -185,9 +274,9 @@ class VectorSearchService {
         return { ...result, score };
       });
 
-      // Sort by score and return top results
+      // Sort by score and return top results - lowered threshold from 0.1 to 0.05
       const sortedResults = scoredResults
-        .filter(r => r.score > 0.1) // Minimum relevance threshold
+        .filter(r => r.score > 0.05) // Lower minimum relevance threshold for better recall
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
 

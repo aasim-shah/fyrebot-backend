@@ -44,6 +44,84 @@ class ChatService {
       return 'META';
     }
     
+    // Pricing and billing queries
+    const pricingQueries = ['price', 'pricing', 'cost', 'how much', 'subscription', 'plan', 'billing', 'payment', 'refund', 'cancel subscription', 'upgrade', 'downgrade'];
+    if (pricingQueries.some(q => queryLower.includes(q))) {
+      return 'PRICING';
+    }
+    
+    // Features and capabilities
+    const featureQueries = ['feature', 'can i', 'does it support', 'is there a way', 'how to use', 'capability', 'functionality'];
+    if (featureQueries.some(q => queryLower.includes(q))) {
+      return 'FEATURES';
+    }
+    
+    // Account and profile management
+    const accountQueries = ['account', 'profile', 'login', 'sign in', 'sign up', 'register', 'password', 'reset password', 'forgot password', 'email', 'change email', 'delete account'];
+    if (accountQueries.some(q => queryLower.includes(q))) {
+      return 'ACCOUNT';
+    }
+    
+    // Troubleshooting and errors
+    const troubleshootingQueries = ['not working', 'broken', 'error', 'issue', 'problem', 'bug', 'crash', 'freeze', 'stuck', 'won\'t load', 'can\'t connect', 'failed'];
+    if (troubleshootingQueries.some(q => queryLower.includes(q))) {
+      return 'TROUBLESHOOTING';
+    }
+    
+    // VPN specific queries
+    const vpnQueries = ['vpn', 'connect to server', 'server location', 'connection speed', 'disconnect', 'ip address', 'encryption', 'protocol', 'kill switch', 'dns leak'];
+    if (vpnQueries.some(q => queryLower.includes(q))) {
+      return 'VPN';
+    }
+    
+    // GPS/Location specific queries
+    const gpsQueries = ['gps', 'location', 'navigation', 'directions', 'route', 'map', 'coordinates', 'tracking', 'find location', 'nearest', 'distance', 'eta'];
+    if (gpsQueries.some(q => queryLower.includes(q))) {
+      return 'GPS_LOCATION';
+    }
+    
+    // Security and privacy
+    const securityQueries = ['security', 'privacy', 'safe', 'secure', 'data protection', 'encryption', 'two factor', '2fa', 'authentication', 'permissions'];
+    if (securityQueries.some(q => queryLower.includes(q))) {
+      return 'SECURITY';
+    }
+    
+    // Installation and setup
+    const setupQueries = ['install', 'setup', 'configure', 'get started', 'download', 'requirements', 'compatibility', 'system requirements'];
+    if (setupQueries.some(q => queryLower.includes(q))) {
+      return 'SETUP';
+    }
+    
+    // Device and platform compatibility
+    const compatibilityQueries = ['device', 'platform', 'ios', 'android', 'windows', 'mac', 'linux', 'browser', 'version', 'compatible'];
+    if (compatibilityQueries.some(q => queryLower.includes(q))) {
+      return 'COMPATIBILITY';
+    }
+    
+    // Performance and speed
+    const performanceQueries = ['slow', 'speed', 'performance', 'lag', 'latency', 'optimize', 'improve performance', 'faster'];
+    if (performanceQueries.some(q => queryLower.includes(q))) {
+      return 'PERFORMANCE';
+    }
+    
+    // Contact and support
+    const supportQueries = ['contact', 'support', 'help', 'customer service', 'reach out', 'speak to someone', 'live chat', 'phone number', 'email support'];
+    if (supportQueries.some(q => queryLower.includes(q))) {
+      return 'SUPPORT';
+    }
+    
+    // Updates and changelog
+    const updateQueries = ['update', 'new version', 'latest version', 'changelog', 'what\'s new', 'release notes'];
+    if (updateQueries.some(q => queryLower.includes(q))) {
+      return 'UPDATES';
+    }
+    
+    // Work experience queries - needs more results
+    const workQueries = ['work experience', 'job history', 'employment', 'career', 'previous work', 'work background', 'professional background'];
+    if (workQueries.some(q => queryLower.includes(q))) {
+      return 'WORK_EXPERIENCE';
+    }
+    
     // Default to knowledge query (uses RAG)
     return 'KNOWLEDGE';
   }
@@ -109,11 +187,22 @@ class ChatService {
         };
       }
 
+      // Determine search parameters based on query type
+      let searchLimit = 3;
+      let minScore = 0.50; // Lowered from 0.60 for better recall
+      let maxContextTokens = 1500;
+      
+      if (queryType === 'WORK_EXPERIENCE') {
+        searchLimit = 6; // Get more results for work experience
+        minScore = 0.45; // Lower threshold for work experience
+        maxContextTokens = 2500; // More context for comprehensive answers
+      }
+
       // For KNOWLEDGE queries, use RAG pipeline with timeout
       const searchStart = Date.now();
       const searchResults = await vectorSearchService.search(tenantId, tenant, query, {
-        limit: 3, // Reduced from 5 to 3 for faster responses
-        minScore: 0.60 // Lowered from 0.70 for more results
+        limit: searchLimit,
+        minScore: minScore
       });
       const searchTime = Date.now() - searchStart;
 
@@ -127,7 +216,7 @@ class ChatService {
       }
 
       // Build context with token limit
-      const context = this.buildContext(searchResults, 1500); // Limit context to ~1500 tokens
+      const context = this.buildContext(searchResults, maxContextTokens);
 
       // Build messages (keep history short)
       const systemPrompt = this.buildSystemPrompt(tenant.businessName || tenant.name);
@@ -146,7 +235,7 @@ class ChatService {
       // Generate response using OpenAI with optimized settings
       const chatStart = Date.now();
       const result = await openaiService.chatCompletion(messages, tenant, {
-        maxTokens: Math.min(tenant.limits.tokensPerRequest, 500), // Reduced from 2048
+        maxTokens: Math.min(tenant.limits.tokensPerRequest, queryType === 'WORK_EXPERIENCE' ? 800 : 500),
         temperature: 0.7
       });
       const chatTime = Date.now() - chatStart;
@@ -160,7 +249,7 @@ class ChatService {
 
       // Determine confidence based on search scores
       const avgScore = searchResults.reduce((sum, r) => sum + r.score, 0) / searchResults.length;
-      const confidence = avgScore > 0.80 ? 'high' : avgScore > 0.60 ? 'medium' : 'low';
+      const confidence = avgScore > 0.75 ? 'high' : avgScore > 0.50 ? 'medium' : 'low';
 
       const responseData = {
         answer: response,
@@ -171,7 +260,7 @@ class ChatService {
           type: r.sectionType,
           score: r.score
         })),
-        queryType: 'KNOWLEDGE'
+        queryType: queryType === 'WORK_EXPERIENCE' ? 'KNOWLEDGE' : queryType
       };
 
       if (includeMetadata) {
@@ -194,7 +283,8 @@ class ChatService {
         sourcesCount: searchResults.length,
         tokensUsed: result.usage.total_tokens,
         searchMs: searchTime,
-        chatMs: chatTime
+        chatMs: chatTime,
+        queryType
       }, 'Chat query processed');
 
       return responseData;
