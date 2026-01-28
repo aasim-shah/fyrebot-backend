@@ -76,6 +76,45 @@ class EmailService {
   }
 
   /**
+   * Send ticket confirmation to customer
+   */
+  async sendTicketConfirmationToCustomer(ticket, tenant) {
+    if (!this.isAvailable()) {
+      logger.warn('Email service not available - skipping customer confirmation');
+      return;
+    }
+
+    try {
+      const emailHtml = this.generateCustomerConfirmationEmail(ticket, tenant);
+      const emailText = this.generateCustomerConfirmationEmailText(ticket, tenant);
+
+      const result = await this.resend.emails.send({
+        from: this.fromEmail,
+        to: ticket.email,
+        subject: `Ticket Received: ${ticket.ticketNumber} - We'll get back to you soon!`,
+        html: emailHtml,
+        text: emailText,
+        reply_to: this.supportEmail,
+      });
+
+      logger.info({ 
+        ticketId: ticket._id, 
+        ticketNumber: ticket.ticketNumber,
+        customerEmail: ticket.email,
+        emailId: result.id 
+      }, 'Customer confirmation email sent');
+
+      return result;
+    } catch (error) {
+      logger.error({ 
+        error: error.message, 
+        ticketId: ticket._id 
+      }, 'Failed to send customer confirmation email');
+      throw error;
+    }
+  }
+
+  /**
    * Send ticket response notification to customer
    */
   async sendTicketResponseNotification(ticket, tenant) {
@@ -383,6 +422,169 @@ ${response.message}
 
 Your original message:
 ${ticket.message}
+
+Reply to: ${this.supportEmail}
+Reference: ${ticket.ticketNumber}
+
+---
+This email was sent by ${tenant.name} via FyreBot
+© ${new Date().getFullYear()} FyreBot. All rights reserved.
+    `.trim();
+  }
+
+  /**
+   * Generate HTML email for customer confirmation
+   */
+  generateCustomerConfirmationEmail(ticket, tenant) {
+    const formattedDate = new Date(ticket.createdAt).toLocaleString('en-US', {
+      dateStyle: 'full',
+      timeStyle: 'short',
+    });
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Support Ticket Confirmation</title>
+        </head>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 40px 20px;">
+            <tr>
+              <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden;">
+                  <!-- Header -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #10b5cb 0%, #0891b2 100%); padding: 32px; text-align: center;">
+                      <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 600;">
+                        ✅ Support Ticket Received
+                      </h1>
+                    </td>
+                  </tr>
+                  
+                  <!-- Content -->
+                  <tr>
+                    <td style="padding: 32px;">
+                      <p style="margin: 0 0 24px 0; color: #374151; font-size: 16px;">
+                        Hi ${ticket.name || 'there'},
+                      </p>
+
+                      <p style="margin: 0 0 24px 0; color: #6b7280; line-height: 1.6;">
+                        Thank you for contacting us! We've received your support request and our team will get back to you as soon as possible.
+                      </p>
+
+                      <div style="background-color: #dbeafe; border-left: 4px solid #10b5cb; padding: 20px; border-radius: 4px; margin-bottom: 24px;">
+                        <p style="margin: 0 0 8px 0; font-size: 14px; color: #1e40af; font-weight: 600;">
+                          📋 Your Ticket Number
+                        </p>
+                        <p style="margin: 0; font-size: 24px; font-weight: 700; color: #10b5cb; font-family: monospace; letter-spacing: 1px;">
+                          ${ticket.ticketNumber}
+                        </p>
+                        <p style="margin: 12px 0 0 0; font-size: 13px; color: #1e40af;">
+                          Please reference this number in any future correspondence.
+                        </p>
+                      </div>
+
+                      <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 24px;">
+                        <h3 style="margin: 0 0 12px 0; color: #374151; font-size: 16px;">Your Message:</h3>
+                        <p style="margin: 0; color: #6b7280; line-height: 1.6; white-space: pre-wrap;">${ticket.message}</p>
+                      </div>
+
+                      <table width="100%" cellpadding="8" cellspacing="0" style="margin-bottom: 24px; background-color: #f8f9fa; border-radius: 8px;">
+                        <tr>
+                          <td style="padding: 12px 20px; border-bottom: 1px solid #e5e7eb;">
+                            <strong style="color: #374151;">Status:</strong>
+                            <span style="display: inline-block; margin-left: 8px; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; background-color: #10b981; color: white;">
+                              ${ticket.status.replace('_', ' ')}
+                            </span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 12px 20px; border-bottom: 1px solid #e5e7eb;">
+                            <strong style="color: #374151;">Priority:</strong>
+                            <span style="display: inline-block; margin-left: 8px; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; background-color: ${this.getPriorityColor(ticket.priority)}; color: white;">
+                              ${ticket.priority}
+                            </span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 12px 20px;">
+                            <strong style="color: #374151;">Submitted:</strong>
+                            <span style="color: #6b7280; margin-left: 8px;">${formattedDate}</span>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; border-radius: 4px; margin-bottom: 24px;">
+                        <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.6;">
+                          ⏱️ <strong>What happens next?</strong><br>
+                          Our support team is reviewing your request. You'll receive an email notification once we respond. Our team is available and will get back to you ASAP!
+                        </p>
+                      </div>
+
+                      <div style="margin-top: 32px; text-align: center;">
+                        <a href="mailto:${this.supportEmail}?subject=Re: ${ticket.ticketNumber}" 
+                           style="display: inline-block; background-color: #10b5cb; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                          Reply to This Ticket
+                        </a>
+                      </div>
+
+                      <p style="margin: 32px 0 0 0; padding-top: 24px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 13px; text-align: center;">
+                        If you have any urgent concerns, please reply to this email with ticket number <strong style="color: #10b5cb;">${ticket.ticketNumber}</strong>.
+                      </p>
+                    </td>
+                  </tr>
+                  
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background-color: #f8f9fa; padding: 24px; text-align: center; border-top: 1px solid #e5e7eb;">
+                      <p style="margin: 0; color: #9ca3af; font-size: 13px;">
+                        This email was sent by ${tenant.name} via FyreBot
+                      </p>
+                      <p style="margin: 8px 0 0 0; color: #9ca3af; font-size: 13px;">
+                        © ${new Date().getFullYear()} FyreBot. All rights reserved.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Generate plain text email for customer confirmation
+   */
+  generateCustomerConfirmationEmailText(ticket, tenant) {
+    const formattedDate = new Date(ticket.createdAt).toLocaleString('en-US', {
+      dateStyle: 'full',
+      timeStyle: 'short',
+    });
+
+    return `
+Support Ticket Received - ${ticket.ticketNumber}
+
+Hi ${ticket.name || 'there'},
+
+Thank you for contacting us! We've received your support request and our team will get back to you as soon as possible.
+
+YOUR TICKET NUMBER: ${ticket.ticketNumber}
+Please reference this number in any future correspondence.
+
+Your Message:
+${ticket.message}
+
+Ticket Details:
+- Status: ${ticket.status.replace('_', ' ').toUpperCase()}
+- Priority: ${ticket.priority.toUpperCase()}
+- Submitted: ${formattedDate}
+
+WHAT HAPPENS NEXT?
+Our support team is reviewing your request. You'll receive an email notification once we respond. Our team is available and will get back to you ASAP!
 
 Reply to: ${this.supportEmail}
 Reference: ${ticket.ticketNumber}

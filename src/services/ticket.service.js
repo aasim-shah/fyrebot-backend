@@ -68,6 +68,9 @@ class TicketService {
         
         if (tenant) {
           await emailService.sendNewTicketNotification(createdTicket, tenant);
+          
+          // Send confirmation email to customer
+          await emailService.sendTicketConfirmationToCustomer(createdTicket, tenant);
         }
       } catch (emailError) {
         logger.error({ 
