@@ -117,9 +117,15 @@ class ChatService {
     }
     
     // Work experience queries - needs more results
-    const workQueries = ['work experience', 'job history', 'employment', 'career', 'previous work', 'work background', 'professional background'];
+    const workQueries = ['work experience', 'job history', 'employment', 'career', 'previous work', 'work background', 'professional background', 'worked before', 'worked at', 'companies worked', 'job', 'position'];
     if (workQueries.some(q => queryLower.includes(q))) {
       return 'WORK_EXPERIENCE';
+    }
+    
+    // Skills and technology queries - needs comprehensive search
+    const skillQueries = ['know', 'familiar with', 'experience with', 'skills', 'technologies', 'tech stack', 'expertise', 'proficient', 'can you', 'do you know', 'does he know', 'does she know'];
+    if (skillQueries.some(q => queryLower.includes(q))) {
+      return 'SKILLS_TECH';
     }
     
     // Default to knowledge query (uses RAG)
@@ -196,6 +202,10 @@ class ChatService {
         searchLimit = 6; // Get more results for work experience
         minScore = 0.45; // Lower threshold for work experience
         maxContextTokens = 2500; // More context for comprehensive answers
+      } else if (queryType === 'SKILLS_TECH') {
+        searchLimit = 5; // Get more results for skills/tech queries
+        minScore = 0.40; // Lower threshold to catch all relevant mentions
+        maxContextTokens = 2000; // Enough context for skill lists
       }
 
       // For KNOWLEDGE queries, use RAG pipeline with timeout
@@ -234,8 +244,9 @@ class ChatService {
 
       // Generate response using OpenAI with optimized settings
       const chatStart = Date.now();
+      const maxResponseTokens = queryType === 'WORK_EXPERIENCE' ? 800 : (queryType === 'SKILLS_TECH' ? 600 : 500);
       const result = await openaiService.chatCompletion(messages, tenant, {
-        maxTokens: Math.min(tenant.limits.tokensPerRequest, queryType === 'WORK_EXPERIENCE' ? 800 : 500),
+        maxTokens: Math.min(tenant.limits.tokensPerRequest, maxResponseTokens),
         temperature: 0.7
       });
       const chatTime = Date.now() - chatStart;
@@ -308,14 +319,18 @@ class ChatService {
 Your role is to answer customer questions accurately based on the provided context.
 
 Guidelines:
-- Answer questions using ONLY the information provided in the context
+- Answer questions using the information provided in the context below
 - Be concise, helpful, and professional
-- If the context doesn't contain enough information, politely acknowledge the limitation
+- **IMPORTANT**: If the context contains ANY related information that can answer the question, use it - don't be overly strict about exact keyword matches
+- For skill/technology questions (e.g., "Does X know React?"): Look for mentions in skill lists, tech stacks, technologies, frameworks, tools, or project descriptions - if the technology is listed ANYWHERE in the context, the answer is YES
+- For work history questions (e.g., "Where did X work?"): Look for company names, job titles, employment dates, positions, or any career information
+- For experience questions: Check skills sections, project descriptions, or any mention of the topic
+- If the context has general information about a topic, provide that information even if it doesn't match the exact question wording
+- Be smart about extracting information - if someone asks "Does X know React?" and you see "MERN Stack Developer" or "React.js" anywhere in the context, that's a YES
+- If the context is completely unrelated or truly has no relevant information, acknowledge that you don't have specific information
 - Format your responses clearly with proper markdown when appropriate
 - For lists, use bullet points or numbered lists
-- For comparisons, consider using tables
-- Maintain a friendly and professional tone
-- Do not make up information that isn't in the context`;
+- Maintain a friendly and professional tone`;
   }
 
   /**
