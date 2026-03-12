@@ -15,6 +15,68 @@ class VectorSearchService {
   }
 
   /**
+   * Expand query for better matching
+   * For "who is X" queries, also search for "X", "about X", etc.
+   * For technology questions, add synonyms and related terms
+   */
+  expandQuery(queryText) {
+    const queryLower = queryText.toLowerCase().trim();
+    
+    // Technology synonym mapping - expands tech names to include related terms
+    const techSynonyms = {
+      'react': ['react', 'react.js', 'reactjs', 'frontend', 'mern'],
+      'docker': ['docker', 'containerization', 'container', 'devops'],
+      'node': ['node', 'node.js', 'nodejs', 'backend', 'mern'],
+      'mongodb': ['mongodb', 'mongo', 'database', 'nosql', 'mern'],
+      'express': ['express', 'express.js', 'expressjs', 'backend', 'api', 'mern'],
+      'aws': ['aws', 'amazon web services', 'cloud', 'ec2', 's3'],
+      'flutter': ['flutter', 'mobile', 'ios', 'android', 'dart'],
+      'graphql': ['graphql', 'api', 'query language'],
+      'typescript': ['typescript', 'ts', 'javascript', 'typed'],
+      'next': ['next', 'next.js', 'nextjs', 'react', 'ssr'],
+      'kubernetes': ['kubernetes', 'k8s', 'container orchestration', 'devops'],
+      'redis': ['redis', 'cache', 'in-memory', 'database']
+    };
+    
+    // Check for technology questions (Does X know Y?, Is X familiar with Y?)
+    const techQuestionMatch = queryLower.match(/(?:does|do|is|can)\s+(?:\w+\s+)?(?:know|familiar|experienced|work\s+with|use)\s+(.+?)(?:\?|$)/i);
+    if (techQuestionMatch) {
+      const tech = techQuestionMatch[1].trim();
+      // Check if we have synonyms for this technology
+      for (const [key, synonyms] of Object.entries(techSynonyms)) {
+        if (tech.includes(key)) {
+          return `${queryText} ${synonyms.join(' ')} skills technologies tech stack expertise`;
+        }
+      }
+      // Generic expansion if no specific synonym found
+      return `${queryText} ${tech} skills technologies expertise proficient experienced`;
+    }
+    
+    // Extract entity name from "who is" questions
+    const whoIsMatch = queryLower.match(/who\s+(?:is|are)\s+(.+?)(?:\?|$)/);
+    if (whoIsMatch) {
+      const entityName = whoIsMatch[1].trim();
+      return `${queryText} ${entityName} about ${entityName} introduction ${entityName}`;
+    }
+    
+    // Extract entity from "tell me about" questions
+    const tellMeMatch = queryLower.match(/tell\s+me\s+(?:about|regarding)\s+(.+?)(?:\?|$)/);
+    if (tellMeMatch) {
+      const entityName = tellMeMatch[1].trim();
+      return `${queryText} ${entityName} about ${entityName} introduction ${entityName}`;
+    }
+    
+    // Extract entity from "what is" questions
+    const whatIsMatch = queryLower.match(/what\s+(?:is|are)\s+(.+?)(?:\?|$)/);
+    if (whatIsMatch) {
+      const entityName = whatIsMatch[1].trim();
+      return `${queryText} ${entityName} about ${entityName}`;
+    }
+    
+    return queryText;
+  }
+
+  /**
    * Perform vector similarity search
    * Note: Requires Atlas Search vector index named 'vector_index'
    */
@@ -26,8 +88,12 @@ class VectorSearchService {
         sectionType = null
       } = options;
 
+      // Expand query for better matching
+      const expandedQuery = this.expandQuery(queryText);
+      logger.debug({ original: queryText, expanded: expandedQuery }, 'Query expansion');
+
       // Generate embedding for query - PASS TENANT
-      const queryEmbedding = await embeddingService.generateEmbedding(queryText, tenant);
+      const queryEmbedding = await embeddingService.generateEmbedding(expandedQuery, tenant);
 
       // Build match filter for tenant isolation
       const matchFilter = { tenantId };
@@ -106,6 +172,11 @@ class VectorSearchService {
     
     // Define topic keywords and their associated file patterns
     const topicBoosts = [
+      {
+        keywords: ['who is', 'who are', 'about', 'introduction', 'tell me about'],
+        filePatterns: ['introduction', 'intro', 'about', 'overview', 'profile', '01_intro', '00_intro'],
+        boost: 0.40
+      },
       {
         keywords: ['work experience', 'job history', 'employment', 'career', 'professional background'],
         filePatterns: ['work_experience', 'work experience', 'employment', 'career', '11_work'],
@@ -187,12 +258,17 @@ class VectorSearchService {
 
   /**
    * Fallback text search if vector search is not available
+   * Uses expanded query for better keyword matching
    */
   async fallbackTextSearch(tenantId, queryText, options = {}) {
     try {
       const { limit = VECTOR_SEARCH.limit, sectionType = null } = options;
 
       logger.info({ tenantId, queryText }, 'Using fallback text search');
+      
+      // Use expanded query for better keyword matching
+      const expandedQuery = this.expandQuery(queryText);
+      logger.debug({ original: queryText, expanded: expandedQuery }, 'Expanded query for text search');
 
       // Build query for simple text matching
       const query = { tenantId };
@@ -204,7 +280,7 @@ class VectorSearchService {
       try {
         const textQuery = { 
           ...query,
-          $text: { $search: queryText }
+          $text: { $search: expandedQuery }
         };
 
         const results = await this.chunksCollection
@@ -232,8 +308,21 @@ class VectorSearchService {
       }
 
       // Fallback to regex search (works without any indexes)
-      const keywords = queryText.toLowerCase().split(/\s+/).filter(k => k.length > 2);
-      const regexPattern = keywords.map(k => `(?=.*${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`).join('');
+      // Use expanded query to extract more keywords
+      const keywords = expandedQuery.toLowerCase().split(/\s+/).filter(k => k.length > 2);
+      
+      // Extract entity name for better matching (e.g., "Aasim Shah" from "who is Aasim Shah")
+      let entityKeywords = [];
+      const whoIsMatch = queryText.toLowerCase().match(/who\s+(?:is|are)\s+(.+?)(?:\?|$)/);
+      if (whoIsMatch) {
+        const entityName = whoIsMatch[1].trim();
+        entityKeywords = entityName.split(/\s+/).filter(k => k.length > 2);
+        logger.info({ entityName, entityKeywords }, 'Extracted entity from query');
+      }
+      
+      // Combine keywords with entity keywords for better matching
+      const allKeywords = [...new Set([...keywords, ...entityKeywords])];
+      const regexPattern = allKeywords.map(k => `(?=.*${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`).join('');
       
       const results = await this.chunksCollection
         .find({
@@ -241,12 +330,14 @@ class VectorSearchService {
           $or: [
             { text: { $regex: regexPattern, $options: 'i' } },
             { sectionTitle: { $regex: regexPattern, $options: 'i' } },
-            ...keywords.map(keyword => ({
+            ...allKeywords.map(keyword => ({
               text: { $regex: keyword, $options: 'i' }
-            }))
+            })),
+            // Boost introduction/about sections
+            { sectionTitle: { $regex: 'introduction|intro|about|overview', $options: 'i' } }
           ]
         })
-        .limit(limit * 2)
+        .limit(limit * 3)
         .project({
           chunkId: 1,
           sectionId: 1,
@@ -263,10 +354,22 @@ class VectorSearchService {
         const textLower = (result.text + ' ' + result.sectionTitle).toLowerCase();
         let score = 0;
         
-        keywords.forEach(keyword => {
+        // Score based on all keywords
+        allKeywords.forEach(keyword => {
           const matches = (textLower.match(new RegExp(keyword, 'gi')) || []).length;
           score += matches * 0.15; // Each match adds to score
         });
+        
+        // Bonus for entity keywords (more important)
+        entityKeywords.forEach(keyword => {
+          const matches = (textLower.match(new RegExp(keyword, 'gi')) || []).length;
+          score += matches * 0.10; // Additional bonus for entity name matches
+        });
+        
+        // Bonus for introduction/about sections
+        if (/introduction|intro|about|overview|profile/i.test(result.sectionTitle)) {
+          score += 0.25;
+        }
         
         // Normalize score to 0-1 range
         score = Math.min(score, 1.0);
